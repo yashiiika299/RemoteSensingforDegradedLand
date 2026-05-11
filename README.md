@@ -1,9 +1,6 @@
 # RemoteSensingforDegradedLand
 Remote Sensing-Based Identification of Degraded Land using Sentinel-2 NDVI
 """
-=============================================================================
-AUTOMATED DEGRADED LAND IDENTIFICATION USING GOOGLE EARTH ENGINE
-=============================================================================
 
 FEATURES:
     ✅ Fully automatic workflow
@@ -27,20 +24,13 @@ FIRST TIME:
 
 RUN:
     python degraded_land_project.py
-=============================================================================
+
 """
 
-# =============================================================================
-# 0. IMPORTS
-# =============================================================================
 
 import ee
 import geemap
 import matplotlib.pyplot as plt
-
-# =============================================================================
-# 1. AUTHENTICATION & INITIALIZATION
-# =============================================================================
 
 ee.Authenticate()
 
@@ -48,9 +38,6 @@ ee.Initialize(project='ndvimaps')
 
 print("✅ Google Earth Engine initialized.")
 
-# =============================================================================
-# 2. AREA OF INTEREST (SMALLER AOI FOR FAST PROCESSING)
-# =============================================================================
 
 # Smaller Rajasthan AOI
 aoi = ee.Geometry.Rectangle([73.5, 26.0, 74.5, 27.0])
@@ -65,9 +52,7 @@ baseline_end   = '2019-02-28'
 
 print("✅ AOI and dates configured.")
 
-# =============================================================================
-# 3. CLOUD MASKING
-# =============================================================================
+
 
 def mask_s2_clouds(image):
 
@@ -98,9 +83,7 @@ def mask_landsat_clouds(image):
 
 print("✅ Cloud masking functions ready.")
 
-# =============================================================================
-# 4. LOAD SATELLITE DATA
-# =============================================================================
+
 
 # Sentinel-2
 s2 = (
@@ -136,9 +119,6 @@ s2_baseline = (
 
 print("✅ Satellite imagery loaded.")
 
-# =============================================================================
-# 5. COMPUTE SPECTRAL INDICES
-# =============================================================================
 
 def compute_indices(img):
 
@@ -204,9 +184,7 @@ s2_baseline_indices = compute_indices(s2_baseline)
 
 print("✅ Spectral indices computed.")
 
-# =============================================================================
-# 6. LAND SURFACE TEMPERATURE
-# =============================================================================
+
 
 lst = (
     ls9.select('ST_B10')
@@ -218,9 +196,6 @@ lst = (
 
 print("✅ Land Surface Temperature computed.")
 
-# =============================================================================
-# 7. RULE-BASED DEGRADATION MAP
-# =============================================================================
 
 ndvi = s2_indices.select('NDVI')
 bsi  = s2_indices.select('BSI')
@@ -236,9 +211,6 @@ threshold_map = (
 
 print("✅ Threshold degradation map created.")
 
-# =============================================================================
-# 8. AUTO TRAINING & VALIDATION DATA
-# =============================================================================
 
 pseudo_labels = (
     ee.Image(0)
@@ -270,9 +242,7 @@ validation_pts = pseudo_labels.stratifiedSample(
 
 print("✅ Automatic samples generated.")
 
-# =============================================================================
-# 9. FEATURE STACK
-# =============================================================================
+
 
 feature_stack = (
     s2_indices.select([
@@ -291,9 +261,7 @@ feature_stack = (
 
 print("✅ Feature stack prepared.")
 
-# =============================================================================
-# 10. RANDOM FOREST CLASSIFICATION
-# =============================================================================
+
 
 training = feature_stack.sampleRegions(
     collection=training_pts,
@@ -321,9 +289,7 @@ classified_map = (
 
 print("✅ Random Forest classification completed.")
 
-# =============================================================================
-# 11. CHANGE DETECTION
-# =============================================================================
+
 
 ndvi_change = (
     s2_indices.select('NDVI')
@@ -339,9 +305,7 @@ bsi_change = (
 
 print("✅ Change detection completed.")
 
-# =============================================================================
-# 12. ACCURACY ASSESSMENT
-# =============================================================================
+
 
 validated = classified_map.sampleRegions(
     collection=validation_pts,
@@ -377,9 +341,7 @@ except Exception as e:
     print("⚠️ Accuracy computation timeout.")
     print("Error:", e)
 
-# =============================================================================
-# 13. EXPORT FUNCTION
-# =============================================================================
+
 
 def export_image(
     image,
@@ -404,9 +366,7 @@ def export_image(
 
     print(f"▶️ Export started: {description}")
 
-# =============================================================================
-# 14. VISUALIZATION EXPORTS (COLORFUL MAPS)
-# =============================================================================
+
 
 # NDVI visualization
 ndvi_vis = s2_indices.select('NDVI').visualize(
@@ -443,9 +403,6 @@ ndvi_change_vis = ndvi_change.visualize(
 
 print("✅ Visualization layers created.")
 
-# =============================================================================
-# 15. EXPORT MAPS
-# =============================================================================
 
 print("\n📤 Exporting maps to Google Drive...")
 
@@ -478,9 +435,6 @@ export_image(
 
 print("✅ Export tasks submitted.")
 
-# =============================================================================
-# 16. INTERACTIVE MAP
-# =============================================================================
 
 Map = geemap.Map()
 
@@ -516,9 +470,7 @@ print("✅ Interactive map ready.")
 
 Map
 
-# =============================================================================
-# 17. AREA STATISTICS
-# =============================================================================
+
 
 pixel_area = (
     classified_map.eq([0, 1, 2, 3])
@@ -560,9 +512,7 @@ for key, label in zip(class_areas.keys(), labels):
         f"({pct:.1f}%)"
     )
 
-# =============================================================================
 # 18. BAR CHART
-# =============================================================================
 
 fig, ax = plt.subplots(figsize=(8, 5))
 
@@ -596,8 +546,5 @@ plt.show()
 
 print("✅ Chart saved.")
 
-# =============================================================================
-# END
-# =============================================================================
 
 print("\n🎉 DEGRADED LAND ANALYSIS COMPLETED.")

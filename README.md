@@ -1,550 +1,162 @@
-# RemoteSensingforDegradedLand
-Remote Sensing-Based Identification of Degraded Land using Sentinel-2 NDVI
-"""
+# 🌍 Automated Degraded Land Identification using Google Earth Engine
 
-FEATURES:
-    ✅ Fully automatic workflow
-    ✅ No QGIS required
-    ✅ No manual shapefiles
-    ✅ Sentinel-2 + Landsat 9
-    ✅ NDVI / BSI / SAVI / EVI / NDWI
-    ✅ Land Surface Temperature (LST)
-    ✅ Random Forest Classification
-    ✅ Automatic pseudo-label generation
-    ✅ Change Detection
-    ✅ Accuracy Assessment
-    ✅ GeoTIFF Export
-    ✅ Interactive Visualization
+A fully automated remote sensing pipeline for identifying and mapping degraded land using **Sentinel-2**, **Landsat 9**, spectral indices, and **Random Forest classification** — no QGIS or manual shapefiles required.
 
-INSTALL:
-    pip install earthengine-api geemap matplotlib numpy pandas
+---
 
-FIRST TIME:
-    earthengine authenticate
+## ✅ Features
 
-RUN:
-    python degraded_land_project.py
+| Feature | Description |
+|---|---|
+| 🛰️ Multi-sensor | Sentinel-2 SR + Landsat 9 L2 |
+| 📐 Spectral Indices | NDVI, BSI, SAVI, EVI, NDWI |
+| 🌡️ LST | Land Surface Temperature from Landsat 9 |
+| 🤖 ML Classification | Random Forest (50 trees) |
+| 🏷️ Auto Labeling | Rule-based pseudo-label generation |
+| 🔄 Change Detection | NDVI & BSI change from baseline (2018–19) |
+| 📊 Accuracy Assessment | Confusion matrix + Kappa coefficient |
+| 📤 GeoTIFF Export | Exports to Google Drive |
+| 🗺️ Interactive Map | `geemap` visualization |
+| 📈 Area Statistics | Per-class area in km² with bar chart |
 
-"""
+---
 
+## 🗺️ Study Area
 
-import ee
-import geemap
-import matplotlib.pyplot as plt
+**Location:** Rajasthan, India
+**AOI:** `[73.5°E, 26.0°N]` → `[74.5°E, 27.0°N]` (1° × 1° bounding box)
 
-ee.Authenticate()
+| Period | Date Range |
+|---|---|
+| **Current** | Nov 2023 – Feb 2024 |
+| **Baseline** | Nov 2018 – Feb 2019 |
 
-ee.Initialize(project='ndvimaps')
+---
 
-print("✅ Google Earth Engine initialized.")
+## 📦 Installation
 
+```bash
+pip install earthengine-api geemap matplotlib numpy pandas
+```
 
-# Smaller Rajasthan AOI
-aoi = ee.Geometry.Rectangle([73.5, 26.0, 74.5, 27.0])
+### First-time Authentication
 
-# Current period
-start_date = '2023-11-01'
-end_date   = '2024-02-28'
+```bash
+earthengine authenticate
+```
 
-# Baseline period
-baseline_start = '2018-11-01'
-baseline_end   = '2019-02-28'
+Then update the project ID in the script:
 
-print("✅ AOI and dates configured.")
+```python
+ee.Initialize(project='your-gee-project-id')
+```
 
+---
 
+## 🚀 Usage
 
-def mask_s2_clouds(image):
+```bash
+python degraded_land_gee.py
+```
 
-    qa = image.select('QA60')
+The script runs end-to-end automatically — no manual inputs needed.
 
-    mask = (
-        qa.bitwiseAnd(1 << 10).eq(0)
-        .And(qa.bitwiseAnd(1 << 11).eq(0))
-    )
+---
 
-    return image.updateMask(mask).divide(10000)
-
-
-def mask_landsat_clouds(image):
-
-    qa = image.select('QA_PIXEL')
-
-    mask = (
-        qa.bitwiseAnd(1 << 3).eq(0)
-        .And(qa.bitwiseAnd(1 << 4).eq(0))
-    )
-
-    return (
-        image.updateMask(mask)
-        .multiply(0.0000275)
-        .add(-0.2)
-    )
-
-print("✅ Cloud masking functions ready.")
-
-
-
-# Sentinel-2
-s2 = (
-    ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-    .filterBounds(aoi)
-    .filterDate(start_date, end_date)
-    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-    .map(mask_s2_clouds)
-    .median()
-    .clip(aoi)
-)
-
-# Landsat 9
-ls9 = (
-    ee.ImageCollection('LANDSAT/LC09/C02/T1_L2')
-    .filterBounds(aoi)
-    .filterDate(start_date, end_date)
-    .map(mask_landsat_clouds)
-    .median()
-    .clip(aoi)
-)
-
-# Baseline Sentinel-2
-s2_baseline = (
-    ee.ImageCollection('COPERNICUS/S2_SR_HARMONIZED')
-    .filterBounds(aoi)
-    .filterDate(baseline_start, baseline_end)
-    .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 20))
-    .map(mask_s2_clouds)
-    .median()
-    .clip(aoi)
-)
-
-print("✅ Satellite imagery loaded.")
-
-
-def compute_indices(img):
-
-    B2  = img.select('B2')
-    B3  = img.select('B3')
-    B4  = img.select('B4')
-    B8  = img.select('B8')
-    B11 = img.select('B11')
-
-    # NDVI
-    ndvi = (
-        img.normalizedDifference(['B8', 'B4'])
-        .rename('NDVI')
-    )
-
-    # NDWI
-    ndwi = (
-        img.normalizedDifference(['B3', 'B8'])
-        .rename('NDWI')
-    )
-
-    # SAVI
-    savi = (
-        B8.subtract(B4)
-        .multiply(1.5)
-        .divide(B8.add(B4).add(0.5))
-        .rename('SAVI')
-    )
-
-    # EVI
-    evi = (
-        B8.subtract(B4)
-        .multiply(2.5)
-        .divide(
-            B8.add(B4.multiply(6))
-            .subtract(B2.multiply(7.5))
-            .add(1)
-        )
-        .rename('EVI')
-    )
-
-    # BSI
-    bsi = (
-        (B11.add(B4))
-        .subtract(B8.add(B2))
-        .divide((B11.add(B4)).add(B8).add(B2))
-        .rename('BSI')
-    )
-
-    return img.addBands([
-        ndvi,
-        ndwi,
-        savi,
-        evi,
-        bsi
-    ])
-
-# Current indices
-s2_indices = compute_indices(s2)
-
-# Baseline indices
-s2_baseline_indices = compute_indices(s2_baseline)
-
-print("✅ Spectral indices computed.")
-
-
-
-lst = (
-    ls9.select('ST_B10')
-    .multiply(0.00341802)
-    .add(149.0)
-    .subtract(273.15)
-    .rename('LST')
-)
-
-print("✅ Land Surface Temperature computed.")
-
-
-ndvi = s2_indices.select('NDVI')
-bsi  = s2_indices.select('BSI')
-
-threshold_map = (
-    ee.Image(0)
-    .where(ndvi.lt(0.3).And(bsi.gt(0.00)), 1)
-    .where(ndvi.lt(0.2).And(bsi.gt(0.05)), 2)
-    .where(ndvi.lt(0.1).And(bsi.gt(0.10)), 3)
-    .rename('degradation_class')
-    .clip(aoi)
-)
-
-print("✅ Threshold degradation map created.")
-
-
-pseudo_labels = (
-    ee.Image(0)
-    .where(ndvi.lt(0.3).And(bsi.gt(0.00)), 1)
-    .where(ndvi.lt(0.2).And(bsi.gt(0.05)), 2)
-    .where(ndvi.lt(0.1).And(bsi.gt(0.10)), 3)
-    .rename('class')
-)
-
-# Training samples
-training_pts = pseudo_labels.stratifiedSample(
-    numPoints=100,
-    classBand='class',
-    region=aoi,
-    scale=30,
-    seed=42,
-    geometries=True
-)
-
-# Validation samples
-validation_pts = pseudo_labels.stratifiedSample(
-    numPoints=50,
-    classBand='class',
-    region=aoi,
-    scale=30,
-    seed=7,
-    geometries=True
-)
-
-print("✅ Automatic samples generated.")
-
-
-
-feature_stack = (
-    s2_indices.select([
-        'NDVI',
-        'NDWI',
-        'SAVI',
-        'EVI',
-        'BSI',
-        'B2',
-        'B3',
-        'B4',
-        'B8',
-        'B11'
-    ])
-)
-
-print("✅ Feature stack prepared.")
-
-
-
-training = feature_stack.sampleRegions(
-    collection=training_pts,
-    properties=['class'],
-    scale=30
-)
-
-rf_classifier = (
-    ee.Classifier.smileRandomForest(
-        numberOfTrees=50,
-        seed=42
-    )
-    .train(
-        features=training,
-        classProperty='class',
-        inputProperties=feature_stack.bandNames()
-    )
-)
-
-classified_map = (
-    feature_stack
-    .classify(rf_classifier)
-    .rename('RF_class')
-)
-
-print("✅ Random Forest classification completed.")
-
-
-
-ndvi_change = (
-    s2_indices.select('NDVI')
-    .subtract(s2_baseline_indices.select('NDVI'))
-    .rename('NDVI_change')
-)
-
-bsi_change = (
-    s2_indices.select('BSI')
-    .subtract(s2_baseline_indices.select('BSI'))
-    .rename('BSI_change')
-)
-
-print("✅ Change detection completed.")
-
-
-
-validated = classified_map.sampleRegions(
-    collection=validation_pts,
-    properties=['class'],
-    scale=30
-)
-
-confusion_matrix_gee = validated.errorMatrix(
-    'class',
-    'RF_class'
-)
-
-print("\n📊 ACCURACY ASSESSMENT")
-print("=" * 40)
-
-try:
-
-    print(
-        "Overall Accuracy:",
-        confusion_matrix_gee.accuracy().getInfo()
-    )
-
-    print(
-        "Kappa Coefficient:",
-        confusion_matrix_gee.kappa().getInfo()
-    )
-
-    print("\nConfusion Matrix:")
-    print(confusion_matrix_gee.getInfo())
-
-except Exception as e:
-
-    print("⚠️ Accuracy computation timeout.")
-    print("Error:", e)
-
-
-
-def export_image(
-    image,
-    description,
-    folder='RemoteSensing_Output',
-    scale=30,
-    crs='EPSG:4326'
-):
-
-    task = ee.batch.Export.image.toDrive(
-        image=image.toFloat(),
-        description=description,
-        folder=folder,
-        region=aoi,
-        scale=scale,
-        crs=crs,
-        fileFormat='GeoTIFF',
-        maxPixels=1e13
-    )
-
-    task.start()
-
-    print(f"▶️ Export started: {description}")
-
-
-
-# NDVI visualization
-ndvi_vis = s2_indices.select('NDVI').visualize(
-    min=-0.1,
-    max=0.8,
-    palette=['red', 'yellow', 'green']
-)
-
-# BSI visualization
-bsi_vis = s2_indices.select('BSI').visualize(
-    min=-0.5,
-    max=0.5,
-    palette=['blue', 'white', 'red']
-)
-
-# RF classification visualization
-rf_vis = classified_map.visualize(
-    min=0,
-    max=3,
-    palette=[
-        '2ECC71',
-        'F7DC6F',
-        'E67E22',
-        'C0392B'
-    ]
-)
-
-# Change detection visualization
-ndvi_change_vis = ndvi_change.visualize(
-    min=-0.5,
-    max=0.5,
-    palette=['red', 'white', 'green']
-)
-
-print("✅ Visualization layers created.")
-
-
-print("\n📤 Exporting maps to Google Drive...")
-
-# Color exports
-export_image(ndvi_vis, 'NDVI_Visual')
-export_image(bsi_vis, 'BSI_Visual')
-export_image(rf_vis, 'RF_Degraded_Land_Map')
-export_image(ndvi_change_vis, 'NDVI_Change_Visual')
-
-# Scientific raster exports
-export_image(
-    s2_indices.select('NDVI'),
-    'NDVI_RAW'
-)
-
-export_image(
-    s2_indices.select('BSI'),
-    'BSI_RAW'
-)
-
-export_image(
-    classified_map,
-    'RF_Classification_RAW'
-)
-
-export_image(
-    lst,
-    'LST_RAW'
-)
-
-print("✅ Export tasks submitted.")
-
-
-Map = geemap.Map()
-
-Map.centerObject(aoi, 9)
-
-Map.addLayer(
-    ndvi_vis,
-    {},
-    'NDVI'
-)
-
-Map.addLayer(
-    bsi_vis,
-    {},
-    'BSI'
-)
-
-Map.addLayer(
-    rf_vis,
-    {},
-    'RF Classification'
-)
-
-Map.addLayer(
-    ndvi_change_vis,
-    {},
-    'NDVI Change'
-)
-
-Map.addLayerControl()
-
-print("✅ Interactive map ready.")
-
-Map
-
-
-
-pixel_area = (
-    classified_map.eq([0, 1, 2, 3])
-    .multiply(ee.Image.pixelArea())
-    .divide(1e6)
-)
-
-class_areas = pixel_area.reduceRegion(
-    reducer=ee.Reducer.sum(),
-    geometry=aoi,
-    scale=30,
-    maxPixels=1e13
-).getInfo()
-
-labels = [
-    'None',
-    'Mild',
-    'Moderate',
-    'Severe'
-]
-
-print("\n📊 AREA STATISTICS")
-print("=" * 40)
-
-total_area = sum(class_areas.values())
-
-for key, label in zip(class_areas.keys(), labels):
-
-    area_km2 = class_areas[key]
-
-    pct = (
-        (area_km2 / total_area) * 100
-        if total_area > 0 else 0
-    )
-
-    print(
-        f"{label:10s}: "
-        f"{area_km2:.2f} km² "
-        f"({pct:.1f}%)"
-    )
-
-# 18. BAR CHART
-
-fig, ax = plt.subplots(figsize=(8, 5))
-
-bars = ax.bar(
-    labels,
-    list(class_areas.values())
-)
-
-ax.set_xlabel('Degradation Class')
-ax.set_ylabel('Area (km²)')
-ax.set_title('Degraded Land Area Statistics')
-
-for bar, val in zip(bars, class_areas.values()):
-
-    ax.text(
-        bar.get_x() + bar.get_width() / 2,
-        bar.get_height(),
-        f'{val:.1f}',
-        ha='center',
-        va='bottom'
-    )
-
-plt.tight_layout()
-
-plt.savefig(
-    'degradation_area_statistics.png',
-    dpi=150
-)
-
-plt.show()
-
-print("✅ Chart saved.")
-
-
-print("\n🎉 DEGRADED LAND ANALYSIS COMPLETED.")
+## 🔬 Methodology
+
+### 1. Cloud Masking
+- **Sentinel-2:** QA60 band — bits 10 & 11 (opaque + cirrus clouds)
+- **Landsat 9:** QA_PIXEL band — bits 3 & 4 (cloud shadow + cloud)
+
+### 2. Spectral Indices
+
+| Index | Formula | Use |
+|---|---|---|
+| **NDVI** | (B8 − B4) / (B8 + B4) | Vegetation health |
+| **NDWI** | (B3 − B8) / (B3 + B8) | Water content |
+| **SAVI** | 1.5 × (B8 − B4) / (B8 + B4 + 0.5) | Soil-adjusted vegetation |
+| **EVI** | 2.5 × (B8 − B4) / (B8 + 6×B4 − 7.5×B2 + 1) | Enhanced vegetation |
+| **BSI** | (B11 + B4 − B8 − B2) / (B11 + B4 + B8 + B2) | Bare soil |
+
+### 3. Degradation Classes
+
+| Class | Label | Criteria |
+|---|---|---|
+| 0 | None | Healthy vegetation |
+| 1 | Mild | NDVI < 0.3 & BSI > 0.00 |
+| 2 | Moderate | NDVI < 0.2 & BSI > 0.05 |
+| 3 | Severe | NDVI < 0.1 & BSI > 0.10 |
+
+### 4. Random Forest Classification
+- **Training:** 100 stratified pseudo-labeled samples per class (seed=42)
+- **Validation:** 50 stratified samples (seed=7)
+- **Features:** NDVI, NDWI, SAVI, EVI, BSI, B2, B3, B4, B8, B11
+- **Trees:** 50
+
+### 5. Change Detection
+- NDVI change = Current NDVI − Baseline NDVI
+- BSI change = Current BSI − Baseline BSI
+
+---
+
+## 📤 Outputs
+
+All exports go to Google Drive under the `RemoteSensing_Output/` folder.
+
+| File | Type | Description |
+|---|---|---|
+| `NDVI_Visual.tif` | GeoTIFF (RGB) | NDVI colored map |
+| `BSI_Visual.tif` | GeoTIFF (RGB) | BSI colored map |
+| `RF_Degraded_Land_Map.tif` | GeoTIFF (RGB) | RF classification colored map |
+| `NDVI_Change_Visual.tif` | GeoTIFF (RGB) | NDVI change colored map |
+| `NDVI_RAW.tif` | GeoTIFF (Float) | Raw NDVI values |
+| `BSI_RAW.tif` | GeoTIFF (Float) | Raw BSI values |
+| `RF_Classification_RAW.tif` | GeoTIFF (Float) | Raw class labels (0–3) |
+| `LST_RAW.tif` | GeoTIFF (Float) | Land Surface Temp (°C) |
+| `degradation_area_statistics.png` | PNG | Bar chart of class areas |
+
+---
+
+## 🗺️ Map Visualization
+
+An interactive `geemap` map is generated with four toggleable layers:
+
+- 🟢 **NDVI** — Red → Yellow → Green
+- 🔵 **BSI** — Blue → White → Red
+- 🎨 **RF Classification** — Green (None) → Yellow (Mild) → Orange (Moderate) → Red (Severe)
+- 🔄 **NDVI Change** — Red (loss) → White (stable) → Green (gain)
+
+---
+
+## 📁 Project Structure
+
+```
+degraded_land_gee.py          # Main script
+degradation_area_statistics.png  # Output bar chart
+README.md                        # This file
+```
+
+---
+
+## ⚠️ Notes
+
+- Accuracy assessment may **time out** for large AOIs — this is handled gracefully.
+- Increase `numPoints` in `stratifiedSample()` for better model accuracy.
+- Change the AOI coordinates to analyze any region globally.
+- Ensure your GEE project has sufficient quota for exports.
+
+---
+
+## 📜 License
+
+This project is open-source and free to use for research and educational purposes.
+
+---
+
+## 🙏 Acknowledgements
+
+- [Google Earth Engine](https://earthengine.google.com/)
+- [Copernicus / ESA — Sentinel-2](https://sentinel.esa.int/)
+- [USGS — Landsat 9](https://www.usgs.gov/landsat-missions/landsat-9)
+- [geemap](https://geemap.org/) by Qiusheng Wu
